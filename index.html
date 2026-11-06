@@ -91,7 +91,7 @@ input[type=range]{accent-color:#60a5fa}
  </header>
 
  <div id="player-stage" class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
-  <iframe id="video-iframe" sandbox="allow-scripts allow-same-origin allow-presentation allow-forms allow-popups allow-orientation-lock" class="hidden h-full w-full border-0" allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; clipboard-write" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title="مشغل الفيديو"></iframe>
+  <iframe id="video-iframe" class="hidden h-full w-full border-0" allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; clipboard-write" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title="مشغل الفيديو"></iframe>
   <video id="video-el" class="hidden h-full w-full bg-black object-contain" playsinline preload="metadata"></video>
   <div id="sub-overlay" dir="auto" class="pointer-events-none absolute inset-x-0 z-20 px-4 text-center leading-snug" style="bottom:8%"></div>
   <button id="big-play" class="absolute z-10 hidden h-16 w-16 place-items-center rounded-full bg-black/60 text-2xl text-white backdrop-blur" aria-label="تشغيل"><i class="fa-solid fa-play"></i></button>
@@ -307,10 +307,12 @@ const BUILTIN_COMPANIES=[
  {id:49,name:'HBO'}
 ];
 
+const lsGet=k=>{try{return localStorage.getItem(k)}catch{return null}};
+
 const state={
  tab:'home',
- apiKey:localStorage.getItem('cs_api_key')||DEFAULT_KEY,
- osKey:localStorage.getItem('cs_os_key')||'',
+ apiKey:lsGet('cs_api_key')||DEFAULT_KEY,
+ osKey:lsGet('cs_os_key')||'',
  trending:[],movies:[],tv:[],search:[],
  query:'',filter:'all',
  genre:'all',genreType:'movie',
@@ -418,14 +420,15 @@ function toast(msg){
 
 async function api(path,params={},signal){
  const u=new URL(TMDB_BASE+path);
- u.searchParams.set('api_key',state.apiKey);
+ const bearer=state.apiKey.length>40;
+ if(!bearer)u.searchParams.set('api_key',state.apiKey);
  u.searchParams.set('language','ar-SA');
 
  Object.entries(params).forEach(([k,v])=>{
   if(v!==undefined&&v!==null&&v!=='')u.searchParams.set(k,v);
  });
 
- const r=await fetch(u,{signal});
+ const r=await fetch(u,{signal,headers:bearer?{Authorization:'Bearer '+state.apiKey}:undefined});
  if(!r.ok)throw new Error(`TMDB ${r.status}`);
  const j=await r.json();
  if(j.success===false)throw new Error(j.status_message||'API error');
@@ -440,6 +443,9 @@ function setTabStyles(){
 }
 
 function switchTab(tab){
+ if(tab!==state.tab&&layers.length===0){
+  try{history.pushState({tab,d:0},'')}catch{}
+ }
  state.tab=tab;
  setTabStyles();
  render();
@@ -1080,6 +1086,11 @@ async function search(page=1){
 }
 
 async function loadHome(){
+ if(!state.apiKey){
+  render();
+  toast('أدخل مفتاح TMDB من الإعدادات أولاً');
+  return;
+ }
  try{
   const [a,b,c]=await Promise.all([
    api('/trending/all/day'),
@@ -1101,6 +1112,7 @@ async function loadHome(){
 }
 
 async function openDetail(item){
+ ensureLayer('detail');
  const selected={...item,media_type:typeOf(item)};
  state.selected=selected;
  state.tvDetail=null;
@@ -1306,7 +1318,7 @@ function compact(x){
  };
 }
 
-function closeDetail(){
+function closeDetailNow(){
  $('detail-modal').classList.add('hidden');
  $('detail-modal').classList.remove('flex');
  state.selected=null;
@@ -1378,7 +1390,7 @@ function playMedia(item,season=1,episode=1,server=getCurrentServer()){
  d.history=d.history.slice(0,100);
  db.write(d);
 
- closeDetail();
+ swapDetailForPlayer();
 
  if(server.mode==='api'){
   resolveApiSource(url,server);
@@ -1446,6 +1458,7 @@ function directUrl(u){
 }
 
 function openPlayer(url,force=false){
+ ensureLayer('player');
  $('player-title').textContent=titleOf(state.playing);
 
  $('player-subtitle').textContent=isMovie(state.playing)
@@ -1593,7 +1606,8 @@ function destroyNative(){
  if($('track-list'))$('track-list').replaceChildren();
 }
 
-function closePlayer(){
+function closePlayerNow(){
+ if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
  if(state.playerMode==='embed')$('video-iframe').src='about:blank';
 
  destroyNative();
@@ -2322,11 +2336,7 @@ async function getImdbId(item){
  const k=t+'_'+item.id;
  if(imdbMem[k]!==undefined)return imdbMem[k];
  try{
-  const u=new URL(`${TMDB_BASE}/${t}/${encodeURIComponent(item.id)}/external_ids`);
-  u.searchParams.set('api_key',state.apiKey);
-  const r=await fetch(u);
-  if(!r.ok)throw new Error('http');
-  const j=await r.json();
+  const j=await api(`/${t}/${encodeURIComponent(item.id)}/external_ids`);
   const m=/^tt(\d+)$/.exec(j.imdb_id||'');
   imdbMem[k]=m?m[1]:null;
  }catch{imdbMem[k]=null}
@@ -2604,11 +2614,12 @@ function openServerModal(){
   });
  }
 
+ ensureLayer('server');
  $('server-modal').classList.remove('hidden');
  $('server-modal').classList.add('flex');
 }
 
-function closeServerModal(){
+function closeServerModalNow(){
  $('server-modal').classList.add('hidden');
  $('server-modal').classList.remove('flex');
 }
@@ -2633,6 +2644,7 @@ function playDirect(){
   return;
  }
 
+ ensureLayer('player');
  $('player-title').textContent='رابط مباشر';
  $('player-subtitle').textContent='تشغيل مستقل';
  $('episode-controls').classList.add('hidden');
@@ -2658,11 +2670,12 @@ function openSettings(){
  $('os-key-input').value=state.osKey||'';
  renderServerManager();
 
+ ensureLayer('settings');
  $('settings-modal').classList.remove('hidden');
  $('settings-modal').classList.add('flex');
 }
 
-function closeSettings(){
+function closeSettingsNow(){
  $('settings-modal').classList.add('hidden');
  $('settings-modal').classList.remove('flex');
  cancelServerEdit();
@@ -2879,24 +2892,46 @@ function updateServer(id,mutator){
 }
 
 function saveSettings(){
+ toast('جاري الحفظ...');
+ saveSettingsInner().catch(e=>toast('تعذر الحفظ: '+((e&&e.message)||e)));
+}
+
+async function saveSettingsInner(){
  const k=$('api-key-input').value.trim();
  const os=$('os-key-input').value.trim();
+ let storageOk=true;
 
- if(k){
-  state.apiKey=k;
-  localStorage.setItem('cs_api_key',k);
- }else if(state.apiKey!==DEFAULT_KEY){
-  toast('أدخل مفتاح API أو اترك المفتاح الحالي كما هو');
+ if(!k&&!state.apiKey){
+  toast('أدخل مفتاح TMDB أولاً');
   return;
  }
 
- state.osKey=os;
+ if(k){
+  state.apiKey=k;
+  try{localStorage.setItem('cs_api_key',k)}catch{storageOk=false}
+ }
 
- if(os)localStorage.setItem('cs_os_key',os);
- else localStorage.removeItem('cs_os_key');
+ state.osKey=os;
+ try{
+  if(os)localStorage.setItem('cs_os_key',os);
+  else localStorage.removeItem('cs_os_key');
+ }catch{storageOk=false}
 
  closeSettings();
- toast('تم حفظ الإعدادات');
+
+ if(!storageOk){
+  toast('المتصفح يمنع التخزين — المفتاح يعمل لهذه الجلسة فقط');
+  loadHome();
+  return;
+ }
+
+ try{
+  await api('/configuration');
+  toast('تم حفظ الإعدادات');
+ }catch{
+  toast('تم الحفظ لكن TMDB رفض المفتاح. استخدم API Key (v3) أو Read Access Token');
+ }
+
  loadHome();
 }
 
@@ -3018,17 +3053,31 @@ window.addEventListener('DOMContentLoaded',()=>{
  applySubStyle();
  renderTrackList();
 
+ try{history.replaceState({tab:'home',d:0},'')}catch{}
  render();
  loadHome();
+ if(!state.apiKey)openSettings();
 });
 
+/* ===== ملء الشاشة للصفحات المضمّنة ===== */
+let embedFsAt=0,embedFsTarget='view',embedFsUserExit=false;
+
 async function toggleEmbedFs(){
+ const now=Date.now();
+ if(now-embedFsAt<700)return;
+ embedFsAt=now;
+
  try{
   if(document.fullscreenElement){
+   embedFsUserExit=true;
    await document.exitFullscreen();
    return;
   }
-  await $('player-view').requestFullscreen();
+
+  const el=(embedFsTarget==='iframe'&&state.playerMode==='embed')
+   ?$('video-iframe'):$('player-view');
+
+  await el.requestFullscreen();
   try{await screen.orientation.lock('landscape')}catch{}
  }catch{
   toast('المتصفح لا يدعم ملء الشاشة هنا');
@@ -3036,8 +3085,71 @@ async function toggleEmbedFs(){
 }
 
 document.addEventListener('fullscreenchange',()=>{
- if(!document.fullscreenElement){
-  try{screen.orientation.unlock()}catch{}
+ if(document.fullscreenElement)return;
+
+ try{screen.orientation.unlock()}catch{}
+
+ const quick=Date.now()-embedFsAt<1500;
+ if(quick&&!embedFsUserExit&&embedFsTarget==='view'&&state.playerMode==='embed'){
+  embedFsTarget='iframe';
+  embedFsAt=0;
+  toggleEmbedFs();
+ }
+ embedFsUserExit=false;
+});
+
+/* ===== زر الرجوع / سجل التنقل ===== */
+const layers=[];
+
+function ensureLayer(name){
+ if(layers.includes(name))return;
+ layers.push(name);
+ try{history.pushState({tab:state.tab,d:layers.length},'')}catch{}
+}
+
+function forceClose(name){
+ if(name==='detail')closeDetailNow();
+ else if(name==='player')closePlayerNow();
+ else if(name==='server')closeServerModalNow();
+ else if(name==='settings')closeSettingsNow();
+}
+
+function requestClose(name){
+ const i=layers.lastIndexOf(name);
+ if(i<0){forceClose(name);return}
+
+ if(i===layers.length-1){
+  history.back();
+  setTimeout(()=>{
+   const j=layers.lastIndexOf(name);
+   if(j>=0){layers.splice(j,1);forceClose(name)}
+  },500);
+ }else{
+  layers.splice(i,1);
+  forceClose(name);
+ }
+}
+
+function closeDetail(){requestClose('detail')}
+function closePlayer(){requestClose('player')}
+function closeServerModal(){requestClose('server')}
+function closeSettings(){requestClose('settings')}
+
+function swapDetailForPlayer(){
+ closeDetailNow();
+ const i=layers.lastIndexOf('detail');
+ if(i>=0)layers[i]='player';
+}
+
+window.addEventListener('popstate',e=>{
+ const st=e.state||{tab:'home',d:0};
+
+ while(layers.length>st.d)forceClose(layers.pop());
+
+ if(layers.length===0&&st.tab&&st.tab!==state.tab){
+  state.tab=st.tab;
+  setTabStyles();
+  render();
  }
 });
 
@@ -3045,11 +3157,8 @@ window.addEventListener('beforeunload',()=>saveProgress());
 
 window.addEventListener('keydown',e=>{
  if(e.key==='Escape'){
-  closeDetail();
-  closeServerModal();
-  closeSettings();
-
-  if(!$('player-view').classList.contains('hidden'))closePlayer();
+  if(document.fullscreenElement)return;
+  if(layers.length)history.back();
   return;
  }
 

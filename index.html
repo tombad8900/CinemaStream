@@ -296,15 +296,23 @@ const DEFAULT_KEY='';
 const DEFAULT_SERVERS=[];
 
 const BUILTIN_COMPANIES=[
- {id:2,name:'Walt Disney Pictures'},
- {id:33,name:'Universal Pictures'},
- {id:34,name:'Sony Pictures'},
- {id:4,name:'Paramount Pictures'},
- {id:174,name:'Warner Bros. Pictures'},
- {id:25,name:'20th Century Studios'},
- {id:420,name:'Marvel Studios'},
- {id:213,name:'Netflix'},
- {id:49,name:'HBO'}
+ {id:2,name:'Walt Disney Pictures',kind:'company'},
+ {id:33,name:'Universal Pictures',kind:'company'},
+ {id:34,name:'Sony Pictures',kind:'company'},
+ {id:4,name:'Paramount Pictures',kind:'company'},
+ {id:174,name:'Warner Bros. Pictures',kind:'company'},
+ {id:25,name:'20th Century Studios',kind:'company'},
+ {id:420,name:'Marvel Studios',kind:'company'},
+ {id:178464,name:'Netflix',kind:'company'},
+ {id:3268,name:'HBO',kind:'company'},
+ {id:213,name:'Netflix',kind:'network'},
+ {id:49,name:'HBO',kind:'network'},
+ {id:2739,name:'Disney+',kind:'network'},
+ {id:1024,name:'Amazon Prime Video',kind:'network'},
+ {id:2552,name:'Apple TV+',kind:'network'},
+ {id:453,name:'Hulu',kind:'network'},
+ {id:4330,name:'Paramount+',kind:'network'},
+ {id:2697,name:'Peacock',kind:'network'}
 ];
 
 const lsGet=k=>{try{return localStorage.getItem(k)}catch{return null}};
@@ -325,6 +333,14 @@ const state={
  companyResults:[],companyId:'',
  networkId:'',
  discoveryRequest:0,
+ resultMode:'text',
+ discoveryKind:'genre',
+ discoveryType:'movie',
+ discoveryId:'',
+ resultsRequest:0,
+ resultsAbort:null,
+ genreRequest:0,
+ companyRequest:0,
  /* المشغل */
  playerMode:null,
  hls:null,
@@ -446,6 +462,7 @@ function switchTab(tab){
  if(tab!==state.tab&&layers.length===0){
   try{history.pushState({tab,d:0},'')}catch{}
  }
+ if(tab!==state.tab)invalidateResultsRequest();
  state.tab=tab;
  setTabStyles();
  render();
@@ -535,7 +552,7 @@ function hero(item){
  return el;
 }
 
-function searchPanel(){
+function searchPanel(showFilters=true){
  const p=document.createElement('section');
  p.className='panel space-y-3 p-3';
 
@@ -547,22 +564,22 @@ function searchPanel(){
   </div>
   <button class="btn btn-primary" id="search-go">بحث</button>
  </div>
- <div class="flex gap-2 overflow-x-auto">
+ ${showFilters?`<div class="flex gap-2 overflow-x-auto">
   <button class="chip ${state.filter==='all'?'active':''}" data-filter="all">الكل</button>
   <button class="chip ${state.filter==='movie'?'active':''}" data-filter="movie">أفلام</button>
   <button class="chip ${state.filter==='tv'?'active':''}" data-filter="tv">مسلسلات</button>
- </div>`;
+ </div>`:""}`;
 
  p.querySelector('#search-go').onclick=()=>search(1);
  p.querySelector('#search-box').addEventListener('keydown',e=>{
   if(e.key==='Enter')search(1);
  });
 
- p.querySelectorAll('[data-filter]').forEach(b=>{
+ if(showFilters)p.querySelectorAll('[data-filter]').forEach(b=>{
   b.onclick=()=>{
    state.filter=b.dataset.filter;
    p.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));
-   if(state.hasSearched)search(1);
+   if(state.hasSearched&&state.resultMode==='text')search(1);
   };
  });
 
@@ -621,7 +638,7 @@ function render(){
 
  }else if(state.tab==='discover'){
 
-  main.appendChild(searchPanel());
+  main.appendChild(searchPanel(false));
   main.appendChild(discoverPanel());
 
   if(state.hasSearched)renderSearchResults(main);
@@ -706,15 +723,17 @@ function discoverPanel(){
  box.innerHTML=`
  <h2 class="text-sm font-bold">استكشاف متقدم</h2>
  <div class="flex flex-wrap gap-2">
-  <button class="chip active" data-mode="genre">التصنيفات</button>
-  <button class="chip" data-mode="company">شركات الإنتاج</button>
-  <button class="chip" data-mode="network">شبكات التلفزيون</button>
+  <button class="chip ${state.discoverMode==='genre'?'active':''}" data-mode="genre">التصنيفات</button>
+  <button class="chip ${state.discoverMode==='company'?'active':''}" data-mode="company">شركات الإنتاج</button>
+  <button class="chip ${state.discoverMode==='network'?'active':''}" data-mode="network">شبكات التلفزيون</button>
  </div>
  <div id="discover-content"></div>`;
 
  box.querySelectorAll('[data-mode]').forEach(b=>{
   b.onclick=()=>{
    state.discoverMode=b.dataset.mode;
+   resetResultState('discovery');
+   state.filter='all';
    box.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('active',x===b));
    renderDiscoverContent(box.querySelector('#discover-content'));
   };
@@ -773,15 +792,19 @@ function renderDiscoverContent(target){
      <button class="btn btn-primary" id="company-search">بحث</button>
     </div>
     <select id="company-results" class="field"><option value="">اختر شركة إنتاج جاهزة أو ابحث بالاسم</option></select>
-    <button class="btn btn-primary w-full" id="company-open">عرض أفلام الشركة</button>
+    <select id="company-type" class="field">
+     <option value="movie">أفلام</option>
+     <option value="tv">مسلسلات</option>
+    </select>
+    <button class="btn btn-primary w-full" id="company-open">عرض الأعمال</button>
     <div class="text-[11px] text-slate-400">القائمة تتضمن شركات شائعة مسبقاً، ويمكن استخدام البحث لأي شركة أخرى.</div>
    </div>`;
 
   const companySelect=target.querySelector('#company-results');
   BUILTIN_COMPANIES.forEach(c=>{
    const o=document.createElement('option');
-   o.value=c.id;
-   o.textContent=c.name;
+   o.value=`${c.kind}:${c.id}`;
+   o.textContent=`${c.name} — ${c.kind==='network'?'شبكة عرض':'شركة إنتاج'}`;
    companySelect.appendChild(o);
   });
   target.querySelector('#company-search').onclick=searchCompanies;
@@ -789,11 +812,21 @@ function renderDiscoverContent(target){
    if(e.key==='Enter')searchCompanies();
   });
 
+  const companyType=target.querySelector('#company-type');
+  companyType.value=state.companyType||'movie';
+  companyType.onchange=()=>{state.companyType=companyType.value};
+
   target.querySelector('#company-open').onclick=()=>{
-   const id=target.querySelector('#company-results').value;
-   if(!id){toast('اختر شركة إنتاج من النتائج');return}
-   state.companyId=id;
-   loadCompanyResults(id);
+   const selected=target.querySelector('#company-results').value;
+   if(!selected){toast('اختر شركة أو شبكة أولاً');return}
+   const [kind,id]=selected.split(':');
+   if(kind==='network'){
+    loadNetworkResults(id);
+   }else{
+    state.companyId=id;
+    state.companyType=companyType.value;
+    loadCompanyResults(id,companyType.value);
+   }
   };
 
  }else{
@@ -815,150 +848,170 @@ function renderDiscoverContent(target){
  }
 }
 
-async function loadGenresForType(type,target){
- target.innerHTML='<option value="">جاري تحميل التصنيفات...</option>';
+function invalidateResultsRequest(){
+ if(state.resultsAbort){
+  try{state.resultsAbort.abort()}catch(e){}
+ }
+ state.resultsAbort=null;
+ state.resultsRequest++;
+ state.requestId=state.resultsRequest;
+ state.discoveryRequest=state.resultsRequest;
+ if(state.loading)state.hasSearched=false;
+ state.loading=false;
+}
 
+function resetResultState(mode='text'){
+ invalidateResultsRequest();
+ state.resultMode=mode;
+ state.search=[];
+ state.page=1;
+ state.totalPages=1;
+ state.hasSearched=false;
+ state.genreRequest++;
+ state.companyRequest++;
+ const old=$('search-results');
+ if(old)old.remove();
+}
+
+function beginResultsRequest(){
+ if(state.resultsAbort){
+  try{state.resultsAbort.abort()}catch(e){}
+ }
+ const ctrl=new AbortController();
+ state.resultsAbort=ctrl;
+ const req=++state.resultsRequest;
+ state.requestId=req;
+ state.discoveryRequest=req;
+ return {ctrl,req};
+}
+
+async function loadGenresForType(type,target){
+ const req=++state.genreRequest;
+ target.innerHTML='<option value="">جاري تحميل التصنيفات...</option>';
  try{
   const r=await api(`/genre/${type}/list`);
+  if(req!==state.genreRequest||!target.isConnected)return;
   target.replaceChildren();
-
   const first=document.createElement('option');
   first.value='';
   first.textContent='اختر التصنيف';
   target.appendChild(first);
-
   (r.genres||[]).forEach(g=>{
    const o=document.createElement('option');
    o.value=g.id;
    o.textContent=g.name;
    target.appendChild(o);
   });
-
- }catch{
-  target.innerHTML='<option value="">تعذر تحميل التصنيفات</option>';
+ }catch(e){
+  if(req===state.genreRequest&&target.isConnected){
+   target.innerHTML='<option value="">تعذر تحميل التصنيفات</option>';
+  }
  }
 }
 
 async function loadGenreResults(type,id){
- state.loading=true;
- state.hasSearched=true;
- state.filter=type;
- state.page=1;
- state.search=[];
- renderSearchResults();
-
- const req=++state.discoveryRequest;
-
- try{
-  const r=await api(`/discover/${type}`,{
-   with_genres:id,
-   sort_by:'popularity.desc',
-   page:1
-  });
-
-  if(req!==state.discoveryRequest)return;
-
-  state.search=(r.results||[]).map(x=>({...x,media_type:type}));
-  state.totalPages=Math.min(r.total_pages||1,500);
-  state.page=1;
-
- }catch(e){
-  toast('تعذر تحميل التصنيف');
- }finally{
-  if(req===state.discoveryRequest){
-   state.loading=false;
-   renderSearchResults();
-  }
- }
+ state.discoveryKind='genre';
+ state.discoveryType=type;
+ state.discoveryId=String(id);
+ state.resultMode='discovery';
+ state.filter='all';
+ await loadDiscoveryResults(1);
 }
 
 async function searchCompanies(){
  const q=$('company-query')?.value.trim();
  if(!q){toast('اكتب اسم شركة الإنتاج');return}
-
  const select=$('company-results');
- select.innerHTML='<option>جاري البحث...</option>';
-
+ if(!select)return;
+ const req=++state.companyRequest;
+ select.innerHTML='<option value="">جاري البحث...</option>';
  try{
   const r=await api('/search/company',{query:q,page:1});
+  if(req!==state.companyRequest||!select.isConnected)return;
   select.replaceChildren();
-
   if(!r.results?.length){
    select.innerHTML='<option value="">لا توجد شركات مطابقة</option>';
    return;
   }
-
   r.results.forEach(c=>{
    const o=document.createElement('option');
-   o.value=c.id;
-   o.textContent=`${c.name} — ID: ${c.id}`;
+   o.value=`company:${c.id}`;
+   o.textContent=`${c.name} — شركة إنتاج`;
    select.appendChild(o);
   });
-
- }catch{
-  select.innerHTML='<option value="">تعذر البحث عن الشركة</option>';
- }
-}
-
-async function loadCompanyResults(id){
- state.loading=true;
- state.filter='movie';
- state.hasSearched=true;
- state.page=1;
- state.search=[];
- renderSearchResults();
-
- const req=++state.discoveryRequest;
-
- try{
-  const r=await api('/discover/movie',{
-   with_companies:id,
-   sort_by:'popularity.desc',
-   page:1
-  });
-
-  if(req!==state.discoveryRequest)return;
-
-  state.search=(r.results||[]).map(x=>({...x,media_type:'movie'}));
-  state.totalPages=Math.min(r.total_pages||1,500);
-
- }catch{
-  toast('تعذر تحميل أعمال الشركة');
- }finally{
-  if(req===state.discoveryRequest){
-   state.loading=false;
-   renderSearchResults();
+ }catch(e){
+  if(req===state.companyRequest&&select.isConnected){
+   select.innerHTML='<option value="">تعذر البحث عن الشركة</option>';
   }
  }
 }
 
+async function loadCompanyResults(id,type='movie'){
+ state.discoveryKind='company';
+ state.discoveryType=type;
+ state.discoveryId=String(id);
+ state.resultMode='discovery';
+ state.filter='all';
+ await loadDiscoveryResults(1);
+}
+
 async function loadNetworkResults(id){
- state.loading=true;
- state.filter='tv';
+ state.discoveryKind='network';
+ state.discoveryType='tv';
+ state.discoveryId=String(id);
+ state.resultMode='discovery';
+ state.filter='all';
+ await loadDiscoveryResults(1);
+}
+
+async function loadDiscoveryResults(page=1){
+ const kind=state.discoveryKind;
+ const type=state.discoveryType;
+ const id=state.discoveryId;
+ if(!id)return;
+
+ let endpoint='';
+ let params={sort_by:'popularity.desc',page};
+
+ if(kind==='genre'){
+  endpoint=`/discover/${type}`;
+  params.with_genres=id;
+ }else if(kind==='company'){
+  endpoint=`/discover/${type}`;
+  params.with_companies=id;
+ }else if(kind==='network'){
+  endpoint='/discover/tv';
+  params.with_networks=id;
+ }else{
+  return;
+ }
+
+ const {ctrl,req}=beginResultsRequest();
+ state.resultMode='discovery';
+ state.filter='all';
+ state.page=page;
  state.hasSearched=true;
- state.page=1;
+ state.loading=true;
  state.search=[];
  renderSearchResults();
 
- const req=++state.discoveryRequest;
-
  try{
-  const r=await api('/discover/tv',{
-   with_networks:id,
-   sort_by:'popularity.desc',
-   page:1
-  });
-
-  if(req!==state.discoveryRequest)return;
-
-  state.search=(r.results||[]).map(x=>({...x,media_type:'tv'}));
+  const r=await api(endpoint,params,ctrl.signal);
+  if(req!==state.resultsRequest)return;
+  if(kind==='company'&&type==='tv')toast(`نتائج TMDB: ${r.total_results||0} | الصفحات: ${r.total_pages||1}`);
+  state.search=(r.results||[]).map(x=>({...x,media_type:type}));
   state.totalPages=Math.min(r.total_pages||1,500);
-
- }catch{
-  toast('تعذر تحميل مسلسلات الشبكة');
+  state.page=page;
+ }catch(e){
+  if(req===state.resultsRequest&&e.name!=='AbortError'){
+   state.search=[];
+   state.totalPages=1;
+   toast('تعذر تحميل نتائج الاستكشاف');
+  }
  }finally{
-  if(req===state.discoveryRequest){
+  if(req===state.resultsRequest){
    state.loading=false;
+   state.resultsAbort=null;
    renderSearchResults();
   }
  }
@@ -974,18 +1027,15 @@ function empty(msg,icon){
 function renderPersonal(key,target){
  const items=data()[key]||[];
  target.replaceChildren();
-
  if(!items.length){
   target.appendChild(empty('القائمة فارغة حالياً','fa-bookmark'));
   return;
  }
-
  target.appendChild(grid(items));
 }
 
 function renderSearchResults(target=$('main')){
  if(!target)return;
-
  const old=target.querySelector('#search-results');
  if(old)old.remove();
 
@@ -993,16 +1043,14 @@ function renderSearchResults(target=$('main')){
  box.id='search-results';
  box.className='space-y-3';
 
- const results=state.search.filter(x=>
-  state.filter==='all'||typeOf(x)===state.filter
- );
+ const results=state.search||[];
+ const heading=state.resultMode==='discovery'?'نتائج الاستكشاف':'نتائج البحث';
 
  const h=document.createElement('div');
  h.className='flex items-center justify-between';
  h.innerHTML=`
- <h2 class="text-sm font-bold">نتائج البحث (${results.length})</h2>
- <span class="text-[10px] text-slate-400">صفحة ${state.page} من ${state.totalPages}</span>`;
-
+  <h2 class="text-sm font-bold">${heading} (${results.length})</h2>
+  <span class="text-[10px] text-slate-400">صفحة ${state.page} من ${state.totalPages}</span>`;
  box.appendChild(h);
 
  if(state.loading){
@@ -1021,34 +1069,36 @@ function renderSearchResults(target=$('main')){
    <span class="text-xs text-slate-400">${state.page} / ${state.totalPages}</span>
    <button class="btn btn-secondary" ${state.page>=state.totalPages?'disabled':''} id="next">التالي</button>`;
 
-  nav.querySelector('#prev').onclick=()=>search(state.page-1);
-  nav.querySelector('#next').onclick=()=>search(state.page+1);
+  nav.querySelector('#prev').onclick=()=>{
+   if(state.page<=1)return;
+   if(state.resultMode==='discovery')loadDiscoveryResults(state.page-1);
+   else search(state.page-1);
+  };
+  nav.querySelector('#next').onclick=()=>{
+   if(state.page>=state.totalPages)return;
+   if(state.resultMode==='discovery')loadDiscoveryResults(state.page+1);
+   else search(state.page+1);
+  };
   box.appendChild(nav);
  }
-
  target.appendChild(box);
 }
 
 async function search(page=1){
  const input=$('search-box');
  const q=(input?.value??state.query).trim();
-
  if(!q){
   toast('اكتب اسم الفيلم أو المسلسل');
   return;
  }
 
  state.query=q;
+ state.resultMode='text';
  state.page=page;
  state.hasSearched=true;
  state.loading=true;
 
- if(state.abort)state.abort.abort();
-
- const ctrl=new AbortController();
- state.abort=ctrl;
- const req=++state.requestId;
-
+ const {ctrl,req}=beginResultsRequest();
  renderSearchResults();
 
  try{
@@ -1059,27 +1109,29 @@ async function search(page=1){
   if(state.filter==='tv')endpoint='/search/tv';
 
   const r=await api(endpoint,params,ctrl.signal);
-
-  if(req!==state.requestId)return;
+  if(req!==state.resultsRequest)return;
 
   state.search=(r.results||[])
    .map(x=>({
     ...x,
-    media_type:x.media_type||state.filter
+    media_type:x.media_type||(
+     state.filter==='all'?'movie':state.filter
+    )
    }))
    .filter(x=>['movie','tv'].includes(typeOf(x)));
 
   state.totalPages=Math.min(r.total_pages||1,500);
-
+  state.page=page;
  }catch(e){
-  if(e.name!=='AbortError'){
+  if(req===state.resultsRequest&&e.name!=='AbortError'){
    state.search=[];
    state.totalPages=1;
    toast('تعذر البحث. تحقق من الاتصال ومفتاح TMDB');
   }
  }finally{
-  if(req===state.requestId){
+  if(req===state.resultsRequest){
    state.loading=false;
+   state.resultsAbort=null;
    renderSearchResults();
   }
  }

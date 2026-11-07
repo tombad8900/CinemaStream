@@ -2604,6 +2604,11 @@ function openServerModal(){
     });
     db.write(d);
 
+    // مسح روابط المصدر السابق عند اختيار مصدر مختلف
+    if(state.server?.id!==s.id && window.CinemaStreamBridge?.clearStreams){
+     try{window.CinemaStreamBridge.clearStreams()}catch(e){}
+    }
+
     state.server=s;
     closeServerModal();
     saveProgress();

@@ -1611,6 +1611,9 @@ function closePlayerNow(){
  if(state.playerMode==='embed')$('video-iframe').src='about:blank';
 
  destroyNative();
+  if(window.CinemaStreamBridge?.clearStreams){
+   try{window.CinemaStreamBridge.clearStreams()}catch(e){}
+  }
 
  $('player-view').classList.add('hidden');
  $('player-view').classList.remove('flex');
